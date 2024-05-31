@@ -455,6 +455,16 @@ pub struct WebViewAttributes {
   /// This configuration only impacts macOS.
   pub accept_first_mouse: bool,
 
+  /// Whether mouse events should be sent to the webview even when the cursor is outside the window.
+  /// Requires `acceptsMouseMovedEvents` to be set on the associated NSWindow.
+  /// eg, msg_send![webview.ns_window(), setAcceptsMouseMovedEvents:true];
+  /// where `webview` is a PlatformWebview.
+  ///
+  /// ## Platform-specific
+  ///
+  /// This configuration only impacts macOS
+  pub always_track_mouse: bool,
+
   /// Indicates whether horizontal swipe gestures trigger backward and forward page navigation.
   ///
   /// ## Platform-specific:
@@ -523,6 +533,7 @@ impl Default for WebViewAttributes {
       devtools: false,
       zoom_hotkeys_enabled: false,
       accept_first_mouse: false,
+      always_track_mouse: true, // TODO: change to false
       back_forward_navigation_gestures: false,
       document_title_changed_handler: None,
       incognito: false,

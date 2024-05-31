@@ -16,7 +16,7 @@ mod util;
 use cocoa::appkit::{NSView, NSViewHeightSizable, NSViewMinYMargin, NSViewWidthSizable};
 use cocoa::{
   base::{id, nil, NO, YES},
-  foundation::{NSDictionary, NSFastEnumeration, NSInteger},
+  foundation::{NSDictionary, NSFastEnumeration, NSInteger, NSUInteger},
 };
 use dpi::{LogicalPosition, LogicalSize};
 use once_cell::sync::Lazy;
@@ -37,7 +37,7 @@ use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 
 use objc::{
   declare::ClassDecl,
-  runtime::{Class, Object, Sel, BOOL},
+  runtime::{self, Class, Object, Sel, BOOL},
 };
 use objc_id::Id;
 
@@ -72,9 +72,25 @@ use http::{
 
 use self::util::Counter;
 
+#[derive(Debug, Clone, Copy)]
+#[repr(u64)]
+pub enum NSTrackingAreaOptions {
+  MouseEnteredAndExited = 0x01 as _,
+  MouseMoved = 0x02 as _,
+  CursorUpdate = 0x04 as _,
+  ActiveWhenFirstResponder = 0x10 as _,
+  ActiveInKeyWindow = 0x20 as _,
+  ActiveInActiveApp = 0x40 as _,
+  ActiveAlways = 0x80 as _,
+  AssumeInside = 0x100 as _,
+  InVisibleRect = 0x200 as _,
+  EnabledDuringMouseDrag = 0x400 as _,
+}
+
 const IPC_MESSAGE_HANDLER_NAME: &str = "ipc";
 #[cfg(target_os = "macos")]
 const ACCEPT_FIRST_MOUSE: &str = "accept_first_mouse";
+const ALWAYS_TRACK_MOUSE: &str = "always_track_mouse";
 
 const NS_JSON_WRITING_FRAGMENTS_ALLOWED: u64 = 4;
 
@@ -440,6 +456,66 @@ impl InnerWebView {
                 NO
               }
             }
+
+            decl.add_ivar::<bool>(ALWAYS_TRACK_MOUSE);
+            decl.add_method(
+              sel!(addTrackingArea:),
+              add_tracking_area as extern "C" fn(&Object, Sel, id),
+            );
+            extern "C" fn add_tracking_area(this: &Object, _: Sel, area: id) {
+              unsafe {
+                let always_track: bool = *this.get_ivar(ALWAYS_TRACK_MOUSE);
+                if !always_track {
+                  return msg_send![super(this, class!(WKWebView)), addTrackingArea: area];
+                }
+                let ns_owner: id = msg_send![area, owner];
+                if (*ns_owner).class() != class!(WKMouseTrackingObserver) {
+                  return msg_send![super(this, class!(WKWebView)), addTrackingArea: area];
+                }
+                // otherwise, amend the options to remove the ActiveInX flags and add ActiveAlways
+                let existing_options: u64 = msg_send![area, options];
+                let updated_options = (existing_options
+                  & (!(NSTrackingAreaOptions::ActiveInActiveApp as u64)
+                    & !(NSTrackingAreaOptions::ActiveInKeyWindow as u64)
+                    & !(NSTrackingAreaOptions::ActiveWhenFirstResponder as u64)))
+                  | (NSTrackingAreaOptions::ActiveAlways as u64);
+                let options_ns_num: id =
+                  msg_send![class!(NSNumber), numberWithUnsignedLong: updated_options];
+                let _: id =
+                  msg_send![area, setValue: options_ns_num forKey: NSString::new("options")];
+                return msg_send![super(this, class!(WKWebView)), addTrackingArea: area];
+              }
+            }
+            decl.add_method(
+              sel!(window),
+              window_getter as extern "C" fn(&Object, Sel) -> id,
+            );
+            extern "C" fn window_getter(this: &Object, _: Sel) -> id {
+              unsafe {
+                let parent = class!(WKWebView);
+                let super_window: id = msg_send![super(this, parent), window];
+                let always_track: bool = *this.get_ivar(ALWAYS_TRACK_MOUSE);
+                if !always_track {
+                  return super_window;
+                }
+                return match super_window.as_ref() {
+                  None => super_window,
+                  Some(s_window) => {
+                    let has_instance_var = s_window
+                      .class()
+                      .instance_variable("isResigningKey")
+                      .is_some();
+                    let is_resigning_key =
+                      has_instance_var && *s_window.get_ivar::<bool>("isResigningKey");
+                    if is_resigning_key {
+                      nil
+                    } else {
+                      super_window
+                    }
+                  }
+                };
+              }
+            }
           }
           decl.register()
         }
@@ -469,7 +545,10 @@ impl InnerWebView {
       }
 
       #[cfg(target_os = "macos")]
-      (*webview).set_ivar(ACCEPT_FIRST_MOUSE, attributes.accept_first_mouse);
+      {
+        (*webview).set_ivar(ACCEPT_FIRST_MOUSE, attributes.accept_first_mouse);
+        (*webview).set_ivar(ALWAYS_TRACK_MOUSE, attributes.always_track_mouse);
+      }
 
       let _: id = msg_send![_preference, setValue:_yes forKey:NSString::new("allowsPictureInPictureMediaPlayback")];
 
