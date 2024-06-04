@@ -32,8 +32,10 @@ use std::{
   sync::{Arc, Mutex},
 };
 
-use core_graphics::base::CGFloat;
-use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+use core_graphics::{
+  base::CGFloat,
+  geometry::{CGPoint, CGRect, CGSize},
+};
 
 use objc::{
   declare::ClassDecl,
@@ -1515,6 +1517,7 @@ impl From<NSData> for NSString {
   }
 }
 
+#[allow(dead_code)] // rustc complains `id` is unused, but it is actually used from Objective-C
 struct NSData(id);
 
 /// Converts from wry screen-coordinates to macOS screen-coordinates.
